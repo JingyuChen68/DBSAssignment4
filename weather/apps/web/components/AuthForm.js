@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseConfigError } from "../lib/supabase";
 
 export default function AuthForm({ mode }) {
   const router = useRouter();
@@ -14,6 +14,12 @@ export default function AuthForm({ mode }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
+
+    if (supabaseConfigError || !supabase) {
+      setMessage(supabaseConfigError);
+      return;
+    }
+
     setLoading(true);
     setMessage("");
 
@@ -31,7 +37,23 @@ export default function AuthForm({ mode }) {
       return;
     }
 
-    setMessage(isSignup ? "Account created. Please log in if needed." : "Logged in successfully.");
+    if (isSignup) {
+      const hasSession = Boolean(result.data.session);
+      setMessage(
+        hasSession
+          ? "Account created. Redirecting to your dashboard."
+          : "Account created. Check your email for confirmation, then log in."
+      );
+      setLoading(false);
+
+      if (hasSession) {
+        router.push("/dashboard");
+        router.refresh();
+      }
+      return;
+    }
+
+    setMessage("Logged in successfully.");
     setLoading(false);
     router.push("/dashboard");
     router.refresh();
@@ -72,7 +94,7 @@ export default function AuthForm({ mode }) {
         />
       </div>
 
-      <button className="primary-button auth-submit" type="submit" disabled={loading}>
+      <button className="primary-button auth-submit" type="submit" disabled={loading || Boolean(supabaseConfigError)}>
         {loading ? "Working..." : isSignup ? "Create Account" : "Log In"}
       </button>
 
