@@ -63,6 +63,7 @@ export default function DashboardClient() {
   const [weatherRows, setWeatherRows] = useState([]);
   const [selectedCity, setSelectedCity] = useState(CITY_OPTIONS[0].city_name);
   const [message, setMessage] = useState("");
+  const [loadingMessage, setLoadingMessage] = useState("Checking your session...");
 
   const cityLookup = useMemo(() => {
     const map = {};
@@ -109,6 +110,7 @@ export default function DashboardClient() {
 
       setUser(currentUser);
       setAuthChecked(true);
+      setLoadingMessage("Loading your dashboard...");
       await loadData(currentUser.id);
     }
 
@@ -185,6 +187,16 @@ export default function DashboardClient() {
     };
   }, [user]);
 
+  useEffect(() => {
+    if (!user || !supabase) return;
+
+    const interval = setInterval(() => {
+      loadData(user.id);
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [user]);
+
   async function addFavoriteCity() {
     if (!user || !supabase) return;
     setMessage("");
@@ -203,7 +215,7 @@ export default function DashboardClient() {
       return;
     }
 
-    setMessage(`Added ${city.city_name}. The worker will update weather soon.`);
+    setMessage(`Added ${city.city_name}. Weather may take up to a minute to appear, depending on the worker poll interval.`);
     await loadData(user.id);
   }
 
@@ -237,7 +249,7 @@ export default function DashboardClient() {
       <main className="container space-y">
         <div className="card">
           <div className="title" style={{ fontSize: 28, marginBottom: 4 }}>Loading your dashboard...</div>
-          <div className="small">Checking your session.</div>
+          <div className="small">{loadingMessage}</div>
         </div>
       </main>
     );
