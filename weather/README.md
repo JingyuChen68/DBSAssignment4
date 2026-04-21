@@ -13,4 +13,4 @@ This is a starter monorepo for MPCS 51238 Assignment 4.
 - Supabase Realtime updates on frontend
 
 ## Run locally
-See `SETUP.md`.
+See `SETUP.md`. 
