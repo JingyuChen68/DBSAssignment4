@@ -82,6 +82,28 @@ export default function DashboardClient() {
     return groups;
   }, []);
 
+  async function loadData(userId) {
+    const favoritesResult = await supabase
+      .from("favorite_cities")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    const weatherResult = await supabase
+      .from("weather_updates")
+      .select("*")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false });
+
+    if (!favoritesResult.error) {
+      setFavorites(favoritesResult.data || []);
+    }
+
+    if (!weatherResult.error) {
+      setWeatherRows(weatherResult.data || []);
+    }
+  }
+
   useEffect(() => {
     if (supabaseConfigError || !supabase) {
       setAuthChecked(true);
@@ -141,33 +163,11 @@ export default function DashboardClient() {
     };
   }, [router]);
 
-  async function loadData(userId) {
-    const favoritesResult = await supabase
-      .from("favorite_cities")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true });
-
-    const weatherResult = await supabase
-      .from("weather_updates")
-      .select("*")
-      .eq("user_id", userId)
-      .order("updated_at", { ascending: false });
-
-    if (!favoritesResult.error) {
-      setFavorites(favoritesResult.data || []);
-    }
-
-    if (!weatherResult.error) {
-      setWeatherRows(weatherResult.data || []);
-    }
-  }
-
   useEffect(() => {
     if (!user || !supabase) return;
 
-    const channel = supabase
-      .channel("weather-updates")
+    const weatherChannel = supabase
+      .channel(`weather-updates-${user.id}`)
       .on(
         "postgres_changes",
         {
@@ -182,8 +182,25 @@ export default function DashboardClient() {
       )
       .subscribe();
 
+    const favoritesChannel = supabase
+      .channel(`favorite-cities-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "favorite_cities",
+          filter: `user_id=eq.${user.id}`
+        },
+        async () => {
+          await loadData(user.id);
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(weatherChannel);
+      supabase.removeChannel(favoritesChannel);
     };
   }, [user]);
 
@@ -215,25 +232,79 @@ export default function DashboardClient() {
       return;
     }
 
+    setFavorites((current) => {
+      const exists = current.some((item) => item.city_name === city.city_name);
+      if (exists) return current;
+      return [
+        ...current,
+        {
+          id: `temp-${city.city_name}`,
+          user_id: user.id,
+          city_name: city.city_name,
+          latitude: city.latitude,
+          longitude: city.longitude
+        }
+      ];
+    });
+
     setMessage(`Added ${city.city_name}. Weather may take up to a minute to appear, depending on the worker poll interval.`);
     await loadData(user.id);
   }
 
   async function removeFavoriteCity(cityName) {
     if (!user || !supabase) return;
+    setMessage("");
 
-    await supabase
+    const previousFavorites = favorites;
+    const previousWeatherRows = weatherRows;
+
+    setFavorites((current) => current.filter((city) => city.city_name !== cityName));
+    setWeatherRows((current) => current.filter((row) => row.city_name !== cityName));
+
+    const { error: favoriteDeleteError } = await supabase
       .from("favorite_cities")
       .delete()
       .eq("user_id", user.id)
       .eq("city_name", cityName);
 
-    await supabase
+    const { error: weatherDeleteError } = await supabase
       .from("weather_updates")
       .delete()
       .eq("user_id", user.id)
       .eq("city_name", cityName);
 
+    if (favoriteDeleteError || weatherDeleteError) {
+      setFavorites(previousFavorites);
+      setWeatherRows(previousWeatherRows);
+      setMessage(`Could not fully remove ${cityName}.`);
+      await loadData(user.id);
+      return;
+    }
+
+    setMessage(`Removed ${cityName}.`);
+    await loadData(user.id);
+  }
+
+  async function removeWeatherUpdate(cityName) {
+    if (!user || !supabase) return;
+    setMessage("");
+
+    const previousWeatherRows = weatherRows;
+    setWeatherRows((current) => current.filter((row) => row.city_name !== cityName));
+
+    const { error } = await supabase
+      .from("weather_updates")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("city_name", cityName);
+
+    if (error) {
+      setWeatherRows(previousWeatherRows);
+      setMessage(`Could not delete weather update for ${cityName}.`);
+      return;
+    }
+
+    setMessage(`Deleted weather update for ${cityName}.`);
     await loadData(user.id);
   }
 
@@ -325,7 +396,16 @@ export default function DashboardClient() {
                 <p>Temperature: {row.temperature ?? "-"}°C</p>
                 <p>Wind Speed: {row.windspeed ?? "-"} km/h</p>
                 <p>Weather Code: {row.weather_code ?? "-"}</p>
-                <p className="small">Last updated: {row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</p>
+                <p className="small">
+                  Last updated: {row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}
+                </p>
+                <button
+                  className="button secondary"
+                  style={{ marginTop: 12 }}
+                  onClick={() => removeWeatherUpdate(row.city_name)}
+                >
+                  Delete
+                </button>
               </div>
             ))}
           </div>
